@@ -23,7 +23,7 @@ jikan = Jikan()
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO)
+    level=logging.DEBUG)
 
 TOKEN = dotenv.get_key('.env', 'TOKEN') or getenv('TOKEN')
 COLLECTIONID = dotenv.get_key('.env', 'COLLECTIONID') or getenv('COLLECTIONID')
@@ -172,21 +172,21 @@ def update_state(update, context, mal_id, doc_id=0):
         [
             InlineKeyboardButton(
                 'Watching',
-                callback_data=f"state-Watching-{mal_id}"),
+                callback_data=f"ustate-Watching-{mal_id}"),
             InlineKeyboardButton(
                 'Completed',
-                callback_data=f"state-Completed-{mal_id}")],
+                callback_data=f"ustate-Completed-{mal_id}")],
         [
             InlineKeyboardButton(
                 'On Hold',
-                callback_data=f"state-On_Hold-{mal_id}"),
+                callback_data=f"ustate-On_Hold-{mal_id}"),
             InlineKeyboardButton(
                 'Dropped',
-                callback_data=f"state-Dropped-{mal_id}")],
+                callback_data=f"ustate-Dropped-{mal_id}")],
         [
             InlineKeyboardButton(
                 'Plan To Watch',
-                callback_data=f"state-Plan_To_Watch-{mal_id}")],
+                callback_data=f"ustate-Plan_To_Watch-{mal_id}")],
 
     ]
     reply_markup = InlineKeyboardMarkup(ck)
@@ -194,7 +194,7 @@ def update_state(update, context, mal_id, doc_id=0):
     context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=(
-            f"what is the state of this anime?\n\n"
+            f"What is the new state of this anime?\n\n"
         ), parse_mode=ParseMode.HTML,
         reply_markup=reply_markup)
 
@@ -231,33 +231,14 @@ def set_state(update, context):
         print('Data exists , update ')
         doc_id = exists['documents'][0]['$id']
         print(exists)
-        try:
-            if mal_id in exists['documents'][0]['MalList']:
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f'{mal_id} is already on your list')
-        except KeyError:
-            # we dont have a mal list
-            payload = {
-                "userID": user_id,
-                "MalList": [mal_id],
-                "state": [state]
-            }
-            exists = database.list_documents(
-                COLLECTIONID,
-                filters=[f'userID={user_id}'])
-            if exists['sum'] == 0:
-                result = database.create_document(COLLECTIONID, payload)
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f'Successfully added {mal_id} to list ')
-            else:
-                context.bot.send_message(
-                    chat_id=update.effective_chat.id,
-                    text=f'already added {mal_id} to list ')
-        else:
-            print(doc_id)
-            # update existing doc
+        if mal_id in exists['documents'][0]['MalList']:
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=(
+                    f'{mal_id} is already on your list\n'
+                    'use /update {id} to update its state\n'
+                    ))
+        else :
             malist = list(exists['documents'][0]['MalList'])
             new_state = list(exists['documents'][0]['state'])
             new_state.append(str(state))
@@ -273,10 +254,52 @@ def set_state(update, context):
                 payload)
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text=f'updated list with {mal_id}')
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text=updated)
+                text=f'Added {mal_id} to list. ')
+
+
+
+def set_update_state(update, context):
+    """
+        Updates the database state and id,
+        generally handles the insert and update side of things 
+    """
+
+    user_id = update.effective_user.id
+    cqd = update.callback_query.data
+    state = str(cqd.split('-')[1])
+    mal_id = int(cqd.split('-')[-1])
+
+    exists = database.list_documents(
+        COLLECTIONID,
+        filters=[f'userID={user_id}'])
+
+    print('Data exists , update ')
+    doc_id = exists['documents'][0]['$id']
+    print(exists)
+    print(doc_id)
+    # update existing doc
+    malist = list(exists['documents'][0]['MalList'])
+    new_state = list(exists['documents'][0]['state'])
+    index  = malist.index(mal_id)
+    del malist[0]
+    del new_state[0]
+    
+    new_state.insert(index+1,str(state))
+    malist.insert(index+1,int(mal_id))
+    
+    payload = {
+        "userID": user_id,
+        "MalList": malist,
+        "state": new_state
+    }
+    updated = database.update_document(
+        COLLECTIONID,
+        doc_id,
+        payload)
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f'Updated {mal_id} with new state ')
+
 
 
 def delete_item(update, context):
@@ -325,8 +348,23 @@ def delete_item(update, context):
                         text=f"{mal_id} isnt in your list ",
                         parse_mode=ParseMode.HTML)
                 else:
-                    pass
-                    # update the doc and remove id
+                    index  = mal_ids.index(mal_id)
+                    del mal_ids[0]
+                    del statuses[0]
+                    
+                    payload = {
+                        "userID": user_id,
+                        "MalList": mal_ids,
+                        "state": statuses
+                    }
+                    database.update_document(
+                        COLLECTIONID,
+                        doc_id,
+                        payload)
+                    context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f'Deleted {mal_id} from list ')
+                    
         except ValueError:
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -338,7 +376,6 @@ def update_item(update, context):
         updates entry state
     """
     user_id = update.effective_user.id
-    user_id = update.effective_user.id
     if not len(context.args) == 1:
         context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -347,7 +384,17 @@ def update_item(update, context):
         try:
             mal_id = int(context.args[0])
             # if doesnt exist ... ignore
-            choose_state(update, context, mal_id)
+            docs = database.list_documents(
+                COLLECTIONID,
+                filters=[f'userID={user_id}'])['documents']
+            print(docs)
+            if not mal_id in docs[0]['MalList']:
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="Item to update not in list .",
+                    parse_mode=ParseMode.HTML)
+            else :
+                update_state(update,context,mal_id)
         except ValueError:
             context.bot.send_message(
                 chat_id=update.effective_chat.id,
@@ -413,6 +460,9 @@ def main():
 
     delete_handler = CommandHandler('delete', delete_item)
     dispatcher.add_handler(delete_handler)
+    
+    update_handler = CommandHandler('update', update_item)
+    dispatcher.add_handler(update_handler)
 
     list_handler = CommandHandler('list', list_list)
     dispatcher.add_handler(list_handler)
@@ -431,6 +481,9 @@ def main():
 
     state = CallbackQueryHandler(set_state, pattern=r"state")
     dispatcher.add_handler(state)
+    
+    ustate = CallbackQueryHandler(set_update_state, pattern=r"ustate")
+    dispatcher.add_handler(ustate)
 
     updater.start_polling()
 
